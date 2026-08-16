@@ -1,0 +1,160 @@
+:root {
+  --bg: #000000;
+  --cyan: #00f5ff;
+  --magenta: #ff2a6d;
+  --dim: #4a6a72;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--cyan);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  cursor: none;
+}
+
+#view {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #000;
+}
+
+.vignette,
+.scanlines {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.vignette {
+  background: radial-gradient(ellipse at center, transparent 42%, rgba(0, 0, 0, 0.62) 100%);
+}
+
+.scanlines {
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 2px,
+    rgba(0, 0, 0, 0.18) 3px
+  );
+  mix-blend-mode: multiply;
+}
+
+#hud {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: 14px;
+  z-index: 3;
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+  pointer-events: none;
+  text-shadow: 0 0 8px rgba(0, 245, 255, 0.25);
+}
+
+#hud-seed {
+  color: var(--cyan);
+}
+
+#hud-look {
+  color: var(--magenta);
+  letter-spacing: 0.22em;
+}
+
+#hud-look:empty {
+  display: none;
+}
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.72);
+  cursor: pointer;
+}
+
+#overlay.hidden {
+  display: none;
+}
+
+.overlay-inner {
+  text-align: center;
+  padding: 24px;
+}
+
+.kicker {
+  color: var(--magenta);
+  font-size: 11px;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+h1 {
+  font-size: clamp(2.4rem, 8vw, 5rem);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-shadow:
+    0 0 12px rgba(0, 245, 255, 0.7),
+    4px 0 0 rgba(255, 42, 109, 0.45);
+}
+
+.prompt {
+  margin-top: 28px;
+  font-size: 14px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  animation: blink 1.4s step-end infinite;
+}
+
+.overlay-hint,
+.overlay-seed {
+  margin-top: 14px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.overlay-seed {
+  color: var(--cyan);
+}
+
+@keyframes blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  51%,
+  100% {
+    opacity: 0.15;
+  }
+}
+
+body.locked {
+  cursor: none;
+}
+
+body:not(.locked) #view {
+  cursor: pointer;
+}

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ASCII City</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <canvas id="view" aria-label="First-person ASCII city viewport"></canvas>
+    <div class="vignette" aria-hidden="true"></div>
+    <div class="scanlines" aria-hidden="true"></div>
+    <div id="hud">
+      <span id="hud-seed">seed —</span>
+      <span id="hud-fps">-- fps</span>
+      <span id="hud-look"></span>
+      <span id="hud-hint">WASD move · SHIFT sprint · MOUSE look · M map · K mute</span>
+    </div>
+    <div id="overlay">
+      <div class="overlay-inner">
+        <p class="kicker">nightnet // district 7</p>
+        <h1>ASCII CITY</h1>
+        <p class="prompt">click to jack in</p>
+        <p class="overlay-hint">WASD move · SHIFT sprint · MOUSE look · M map · K mute</p>
+        <p id="overlay-seed" class="overlay-seed"></p>
+      </div>
+    </div>
+    <script type="module" src="js/main.js?v=brake1"></script>
+  </body>
+</html>
