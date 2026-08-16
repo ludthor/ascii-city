@@ -80,4 +80,4 @@ Interiors, a day/night sun cycle, intersection queues, walkable bridges, distric
 
 ## License
 
-Source is provided as-is for this prototype. No license file yet.
+[MIT](LICENSE) — Copyright (c) 2026 ludthor
