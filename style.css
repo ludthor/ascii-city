@@ -2,7 +2,15 @@
   --bg: #000000;
   --cyan: #00f5ff;
   --magenta: #ff2a6d;
+  --amber: #ffe600;
   --dim: #4a6a72;
+  --hud: #e4eef0;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
 * {
@@ -55,23 +63,44 @@ body {
 
 #hud {
   position: fixed;
-  left: 16px;
-  right: 16px;
-  bottom: 14px;
+  left: 12px;
+  bottom: 12px;
   z-index: 3;
   display: flex;
-  gap: 1.5rem;
+  gap: 1.25rem;
   flex-wrap: wrap;
-  font-size: 11px;
+  max-width: calc(100% - 24px);
+  padding: 10px 14px;
+  font-size: 13px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--dim);
+  color: var(--hud);
   pointer-events: none;
-  text-shadow: 0 0 8px rgba(0, 245, 255, 0.25);
+  background: #000;
+  border: 1px solid #2a8a99;
+  text-shadow: none;
 }
 
 #hud-seed {
   color: var(--cyan);
+}
+
+#hud-place {
+  color: var(--cyan);
+}
+
+#hud-place .hud-bear {
+  color: var(--hud);
+  text-transform: none;
+}
+
+#hud-place .hud-here {
+  color: var(--amber);
+  text-transform: uppercase;
+}
+
+#hud-place:empty {
+  display: none;
 }
 
 #hud-look {

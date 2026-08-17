@@ -10,6 +10,7 @@ export const FLOOR_PLAZA = 4;
 export const ROOF_NONE = 0;
 export const ROOF_MAST = 1;
 export const ROOF_DISH = 2;
+export const ROOF_BOARD = 3;
 
 export const MAP_SIZE = 96;
 const AVENUE_EVERY = 14;
@@ -42,22 +43,38 @@ export function generateCity(seedStr, numericSeed) {
   const cx0 = (w / 2) | 0;
   const cy0 = (h / 2) | 0;
 
+  const blvdAxis = rng() < 0.5 ? 0 : 1;
+  const blvdWhich = (rng() * 7) | 0;
+
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
-      const onAveX = x % AVENUE_EVERY < AVENUE_WIDTH;
-      const onAveY = y % AVENUE_EVERY < AVENUE_WIDTH;
+      const aveIdxX = (x / AVENUE_EVERY) | 0;
+      const aveIdxY = (y / AVENUE_EVERY) | 0;
+      const wideX = blvdAxis === 0 && aveIdxX === blvdWhich;
+      const wideY = blvdAxis === 1 && aveIdxY === blvdWhich;
+      const onAveX = x % AVENUE_EVERY < (wideX ? 3 : AVENUE_WIDTH);
+      const onAveY = y % AVENUE_EVERY < (wideY ? 3 : AVENUE_WIDTH);
       const onStX = x % STREET_EVERY === 0;
       const onStY = y % STREET_EVERY === 0;
       const nearSpawn = Math.abs(x - cx0) <= 4 && Math.abs(y - cy0) <= 4;
+      const dCenter = Math.hypot(x / w - 0.5, y / h - 0.5) * 2;
+      const inCore = dCenter < 0.55;
 
       if (onAveX || onAveY) {
         road[i] = 1;
       } else if (onStX || onStY) {
         const segX = (x / STREET_EVERY) | 0;
         const segY = (y / STREET_EVERY) | 0;
-        const drop = rand01(numericSeed ^ 0x9e3779b9, segX, segY) < 0.16;
+        const dropP = inCore ? 0.4 : 0.16;
+        const drop = rand01(numericSeed ^ 0x9e3779b9, segX, segY) < dropP;
         if (!drop || nearSpawn) road[i] = 1;
+      }
+      if (x > cx0 && y < cy0 && (x + y) % 18 === 0 && dCenter < 0.72 && dCenter > 0.12) {
+        road[i] = 1;
+      }
+      if (x < cx0 && y > cy0 && ((x - y + 192) % 18) === 0 && dCenter < 0.72 && dCenter > 0.12) {
+        road[i] = 1;
       }
     }
   }
@@ -110,18 +127,35 @@ export function generateCity(seedStr, numericSeed) {
       const dist = Math.hypot(dx, dy) * 2;
       const downtown = Math.max(0, 1 - dist);
       const n1 = valueNoise2(numericSeed, mx * 0.18, my * 0.18);
-      const isPark = area > 12 && rng() < 0.1 + downtown * 0.04 + (1 - downtown) * 0.03;
+      const isPark =
+        (area > 12 && rng() < 0.1 + downtown * 0.04 + (1 - downtown) * 0.03) ||
+        (area > 36 && downtown > 0.18 && downtown < 0.62 && rng() < 0.28);
       const id = nextId++;
 
       let baseH = 3.4 + downtown * downtown * 16 + n1 * 6 + rng() * 2.8;
       if (downtown > 0.55 && rng() < 0.14) baseH *= 1.55;
       baseH = Math.max(2.2, Math.min(26, baseH));
 
+      const hueN = valueNoise2(numericSeed ^ 0xa11e, mx * 0.055, my * 0.055);
+      const ang = Math.atan2(dy, dx);
       let palette;
-      if (baseH > 14) palette = rng() < 0.62 ? C.CYAN : C.BLUE;
-      else if (baseH > 8) palette = rng() < 0.58 ? C.YELLOW : C.CYAN;
-      else if (rng() < 0.16) palette = C.ORANGE;
-      else palette = rng() < 0.62 ? C.YELLOW : C.AMBER;
+      if (downtown < 0.32) {
+        if (hueN < 0.34) palette = hueN < 0.17 ? C.BLUE_DEEP : C.BLUE;
+        else if (hueN < 0.67) palette = hueN < 0.5 ? C.AMBER : C.ORANGE;
+        else palette = hueN < 0.84 ? C.MAGENTA : C.YELLOW;
+      } else {
+        const wedge = (((ang + Math.PI) / (Math.PI * 2)) * 3) | 0;
+        if (wedge === 0) palette = hueN < 0.5 ? C.MAGENTA : C.RED;
+        else if (wedge === 1) palette = hueN < 0.34 ? C.AMBER : hueN < 0.67 ? C.YELLOW : C.ORANGE;
+        else palette = hueN < 0.55 ? C.BLUE : C.BLUE_DEEP;
+      }
+      const family =
+        palette === C.MAGENTA || palette === C.RED
+          ? [C.MAGENTA, C.RED]
+          : palette === C.BLUE || palette === C.BLUE_DEEP || palette === C.CYAN
+            ? [C.BLUE, C.BLUE_DEEP]
+            : [C.YELLOW, C.AMBER, C.ORANGE];
+      const accent = family[(rng() * family.length) | 0];
 
       const pat = (rng() * 6) | 0;
       const hasNeon = rng() < 0.42 || palette === C.MAGENTA;
@@ -187,62 +221,254 @@ export function generateCity(seedStr, numericSeed) {
           if (!openN) cores++;
         }
 
-        const setback = cores > 0 && baseH > 8;
-        if (setback) {
-          const podiumH = 3.0 + rng() * 1.6;
-          const podiumPal =
-            rng() < 0.22 ? C.MAGENTA : rng() < 0.4 ? C.ORANGE : rng() < 0.5 ? C.AMBER : C.YELLOW;
-          const towerPal = rng() < 0.58 ? C.CYAN : C.BLUE;
+        function isShell(i) {
+          const cx = i % w;
+          const cy = (i / w) | 0;
+          return (
+            cx <= 0 ||
+            !solid[i - 1] ||
+            cx >= w - 1 ||
+            !solid[i + 1] ||
+            cy <= 0 ||
+            !solid[i - w] ||
+            cy >= h - 1 ||
+            !solid[i + w]
+          );
+        }
+
+        function nearestCenter(list) {
+          let best = list[0];
+          let bestD = 1e9;
+          for (let k = 0; k < list.length; k++) {
+            const i = list[k];
+            const d = (i % w + 0.5 - mx) * (i % w + 0.5 - mx) + (((i / w) | 0) + 0.5 - my) * (((i / w) | 0) + 0.5 - my);
+            if (d < bestD) {
+              bestD = d;
+              best = i;
+            }
+          }
+          return best;
+        }
+
+        const MASS_SLAB = 0;
+        const MASS_NEEDLE = 1;
+        const MASS_STEPPED = 2;
+        const MASS_TWIN = 3;
+        const MASS_NOTCH = 4;
+        const MASS_LOW = 5;
+        const MASS_CANT = 6;
+        let mass = MASS_SLAB;
+        const roll = rng();
+        if (downtown > 0.48 && rng() < 0.11) mass = MASS_LOW;
+        else if (cores > 0 && solids.length >= 4 && downtown > 0.28) {
+          if (roll < 0.16) mass = MASS_NEEDLE;
+          else if (roll < 0.34) mass = MASS_STEPPED;
+          else if (roll < 0.46 && solids.length >= 5) mass = MASS_TWIN;
+          else if (roll < 0.58) mass = MASS_NOTCH;
+          else if (roll < 0.74) mass = MASS_CANT;
+          else mass = MASS_SLAB;
+        } else if (baseH > 11 && solids.length >= 2 && roll < 0.28) {
+          mass = MASS_NEEDLE;
+        } else if (baseH > 8 && cores > 0 && roll < 0.22) {
+          mass = MASS_STEPPED;
+        }
+
+        const jitter = (i) => (rand01(numericSeed, i % w, (i / w) | 0) - 0.5);
+
+        if (mass === MASS_LOW) {
+          const lowH = 2.4 + rng() * 1.8;
           for (let s = 0; s < solids.length; s++) {
             const i = solids[s];
-            const cx = i % w;
-            const cy = (i / w) | 0;
-            const isShell =
-              cx <= 0 ||
-              !solid[i - 1] ||
-              cx >= w - 1 ||
-              !solid[i + 1] ||
-              cy <= 0 ||
-              !solid[i - w] ||
-              cy >= h - 1 ||
-              !solid[i + w];
-            if (isShell) {
-              height[i] = podiumH + (rand01(numericSeed, cx, cy) - 0.5) * 0.15;
-              pal[i] = podiumPal;
+            height[i] = lowH + jitter(i) * 0.2;
+            pal[i] = isShell(i) ? accent : palette;
+            neon[i] = isShell(i) ? 1 : 0;
+          }
+        } else if (mass === MASS_NEEDLE) {
+          const podiumH = 2.8 + rng() * 1.7;
+          const peakH = Math.min(26, baseH * 1.22 + 2.4);
+          const inners = [];
+          for (let s = 0; s < solids.length; s++) if (!isShell(solids[s])) inners.push(solids[s]);
+          const peak = nearestCenter(inners.length ? inners : solids);
+          for (let s = 0; s < solids.length; s++) {
+            const i = solids[s];
+            if (i === peak) {
+              height[i] = peakH + jitter(i) * 0.2;
+              pal[i] = palette;
+              neon[i] = 0;
+            } else {
+              height[i] = podiumH + jitter(i) * 0.15;
+              pal[i] = accent;
+              neon[i] = isShell(i) ? 1 : 0;
+            }
+          }
+        } else if (mass === MASS_STEPPED) {
+          const podiumH = 3.0 + rng() * 1.5;
+          const midH = Math.max(podiumH + 1.2, baseH * 0.58);
+          for (let s = 0; s < solids.length; s++) {
+            const i = solids[s];
+            const shell = isShell(i);
+            let mid = false;
+            if (!shell) {
+              const nbrs = [i - 1, i + 1, i - w, i + w];
+              for (let k = 0; k < 4; k++) {
+                const j = nbrs[k];
+                if (j < 0 || j >= n) continue;
+                if (solid[j] && bldg[j] === id && isShell(j)) mid = true;
+              }
+            }
+            if (shell) {
+              height[i] = podiumH + jitter(i) * 0.15;
+              pal[i] = accent;
+              neon[i] = 1;
+            } else if (mid) {
+              height[i] = midH + jitter(i) * 0.2;
+              pal[i] = palette;
+              neon[i] = 0;
+            } else {
+              height[i] = baseH + jitter(i) * 0.3;
+              pal[i] = palette;
+              neon[i] = 0;
+            }
+          }
+        } else if (mass === MASS_TWIN) {
+          const podiumH = 3.1 + rng() * 1.4;
+          const peakH = Math.min(26, baseH * 1.08 + 1.2);
+          let a = solids[0];
+          let b = solids[solids.length - 1];
+          let bestD = -1;
+          for (let p = 0; p < solids.length; p++) {
+            for (let q = p + 1; q < solids.length; q++) {
+              const ix = solids[p] % w;
+              const iy = (solids[p] / w) | 0;
+              const jx = solids[q] % w;
+              const jy = (solids[q] / w) | 0;
+              const d = (ix - jx) * (ix - jx) + (iy - jy) * (iy - jy);
+              if (d > bestD) {
+                bestD = d;
+                a = solids[p];
+                b = solids[q];
+              }
+            }
+          }
+          for (let s = 0; s < solids.length; s++) {
+            const i = solids[s];
+            if (i === a || i === b) {
+              height[i] = peakH + jitter(i) * 0.25;
+              pal[i] = palette;
+              neon[i] = 0;
+            } else {
+              height[i] = podiumH + jitter(i) * 0.15;
+              pal[i] = accent;
+              neon[i] = isShell(i) ? 1 : 0;
+            }
+          }
+        } else if (mass === MASS_NOTCH) {
+          for (let s = 0; s < solids.length; s++) {
+            const i = solids[s];
+            height[i] = baseH + jitter(i) * 0.35;
+            pal[i] = palette;
+            neon[i] = isShell(i) ? 1 : 0;
+          }
+          const bite = Math.max(1, (solids.length * 0.22) | 0);
+          const side = rng() < 0.5;
+          const ranked = solids.slice().sort((ia, ib) => {
+            const ax = ia % w;
+            const ay = (ia / w) | 0;
+            const bx = ib % w;
+            const by = (ib / w) | 0;
+            return side ? bx - ax || by - ay : by - ay || bx - ax;
+          });
+          for (let k = 0; k < bite && k < ranked.length; k++) {
+            const i = ranked[k];
+            height[i] = Math.max(2.4, height[i] * (0.48 + rng() * 0.12));
+          }
+        } else if (mass === MASS_CANT) {
+          const screenH = Math.min(26, baseH * 1.18 + 1.6);
+          const coreH = Math.max(2.6, baseH * 0.52);
+          for (let s = 0; s < solids.length; s++) {
+            const i = solids[s];
+            if (isShell(i)) {
+              height[i] = screenH + jitter(i) * 0.2;
+              pal[i] = palette;
               neon[i] = 1;
             } else {
-              height[i] = baseH + (rand01(numericSeed, cx, cy) - 0.5) * 0.35;
-              pal[i] = towerPal;
+              height[i] = coreH + jitter(i) * 0.2;
+              pal[i] = accent;
               neon[i] = 0;
             }
           }
         } else {
           for (let s = 0; s < solids.length; s++) {
             const i = solids[s];
-            const cx = i % w;
-            const cy = (i / w) | 0;
-            const isShell =
-              cx <= 0 ||
-              !solid[i - 1] ||
-              cx >= w - 1 ||
-              !solid[i + 1] ||
-              cy <= 0 ||
-              !solid[i - w] ||
-              cy >= h - 1 ||
-              !solid[i + w];
-            if (!isShell) neon[i] = 0;
+            height[i] = baseH + jitter(i) * 0.4;
+            pal[i] = palette;
+            neon[i] = isShell(i) ? 1 : 0;
           }
         }
 
         const tall = [];
-        for (let s = 0; s < solids.length; s++) if (height[solids[s]] > 10) tall.push(solids[s]);
-        if (tall.length) {
-          const a = tall[(rng() * tall.length) | 0];
-          roof[a] = ROOF_MAST;
-          if (tall.length > 1 && rng() < 0.62) {
+        let maxH = 0;
+        for (let s = 0; s < solids.length; s++) {
+          const hi = height[solids[s]];
+          if (hi > maxH) maxH = hi;
+          if (hi > 8) tall.push(solids[s]);
+        }
+        if (mass === MASS_NEEDLE || mass === MASS_TWIN) {
+          const peaks = [];
+          for (let s = 0; s < solids.length; s++) {
+            if (height[solids[s]] > maxH - 1.2) peaks.push(solids[s]);
+          }
+          for (let p = 0; p < peaks.length; p++) roof[peaks[p]] = ROOF_MAST;
+        } else if (mass === MASS_CANT) {
+          for (let s = 0; s < solids.length; s++) {
+            if (isShell(solids[s]) && rng() < 0.55) roof[solids[s]] = ROOF_BOARD;
+          }
+        } else if (mass !== MASS_LOW && maxH > 6) {
+          if (tall.length && rng() < 0.62) {
+            roof[tall[(rng() * tall.length) | 0]] = mass === MASS_SLAB ? ROOF_DISH : ROOF_MAST;
+          }
+          if (tall.length > 1 && rng() < 0.48) {
             let b = tall[(rng() * tall.length) | 0];
-            if (b === a) b = tall[(tall.indexOf(a) + 1) % tall.length];
-            roof[b] = rng() < 0.45 ? ROOF_DISH : ROOF_MAST;
+            if (roof[b]) b = tall[(tall.indexOf(b) + 1) % tall.length];
+            roof[b] = rng() < 0.55 ? ROOF_BOARD : ROOF_DISH;
+          } else if (tall.length && rng() < 0.36) {
+            roof[tall[(rng() * tall.length) | 0]] = ROOF_BOARD;
+          }
+        }
+
+        let facade = 0;
+        if (mass === MASS_CANT && (palette === C.MAGENTA || palette === C.RED || palette === C.YELLOW || palette === C.AMBER))
+          facade = 7;
+        else if (mass === MASS_CANT) facade = 4;
+        else if (mass === MASS_NEEDLE) facade = rng() < 0.55 ? 6 : 1;
+        else if (mass === MASS_LOW) facade = rng() < 0.5 ? 5 : 9;
+        else if (mass === MASS_STEPPED) facade = rng() < 0.4 ? 10 : rng() < 0.35 ? 4 : (rng() * 5) | 0;
+        else if (mass === MASS_NOTCH) facade = rng() < 0.45 ? 5 : rng() < 0.5 ? 9 : 6;
+        else if (mass === MASS_SLAB && downtown > 0.4 && rng() < 0.22 && (palette === C.MAGENTA || palette === C.RED))
+          facade = 7;
+        else if (palette === C.MAGENTA || palette === C.RED) facade = rng() < 0.28 ? 7 : 8;
+        else if (palette === C.YELLOW || palette === C.AMBER || palette === C.ORANGE) facade = rng() < 0.42 ? 8 : 2;
+        else facade = (rng() * 5) | 0;
+        for (let s = 0; s < solids.length; s++) pattern[solids[s]] = facade;
+
+        if (solids.length > 8 && rng() < 0.4) {
+          const corners = [minx + miny * w, maxx + miny * w, minx + maxy * w, maxx + maxy * w];
+          const nCut = rng() < 0.45 ? 2 : 1;
+          for (let k = 0; k < nCut; k++) {
+            const i = corners[(rng() * 4) | 0];
+            if (!solid[i] || bldg[i] !== id) continue;
+            let remain = 0;
+            for (let s = 0; s < solids.length; s++) if (solid[solids[s]] && solids[s] !== i) remain++;
+            if (remain < 3) continue;
+            solid[i] = 0;
+            height[i] = 0;
+            neon[i] = 0;
+            roof[i] = 0;
+            bldg[i] = 0;
+            pal[i] = 0;
+            pattern[i] = 0;
+            floor[i] = FLOOR_SIDEWALK;
+            foliage[i] = 0;
           }
         }
 
@@ -328,13 +554,54 @@ export function generateCity(seedStr, numericSeed) {
       landmarkId = bldg[i];
     }
   }
+  let landmarkX = 0;
+  let landmarkY = 0;
   if (landmarkId) {
+    let sx = 0;
+    let sy = 0;
+    let cnt = 0;
     for (let i = 0; i < n; i++) {
-      if (bldg[i] === landmarkId && height[i] > 8) {
+      if (bldg[i] !== landmarkId || !solid[i]) continue;
+      if (height[i] > 8) {
         height[i] = Math.max(height[i], 22);
         pal[i] = C.CYAN;
         pattern[i] = 1;
       }
+      sx += i % w;
+      sy += (i / w) | 0;
+      cnt++;
+    }
+    if (cnt) {
+      landmarkX = sx / cnt + 0.5;
+      landmarkY = sy / cnt + 0.5;
+      let peak = -1;
+      let peakD = 1e9;
+      for (let i = 0; i < n; i++) {
+        if (bldg[i] !== landmarkId || !solid[i]) continue;
+        const dx = i % w + 0.5 - landmarkX;
+        const dy = ((i / w) | 0) + 0.5 - landmarkY;
+        const d = dx * dx + dy * dy;
+        if (d < peakD) {
+          peakD = d;
+          peak = i;
+        }
+      }
+      if (peak >= 0) {
+        height[peak] = 26;
+        pal[peak] = C.CYAN;
+        pattern[peak] = 1;
+        roof[peak] = ROOF_MAST;
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      if (!solid[i] || bldg[i] === landmarkId || bldg[i] === 0xffff) continue;
+      const dx = i % w + 0.5 - landmarkX;
+      const dy = ((i / w) | 0) + 0.5 - landmarkY;
+      const close = dx * dx + dy * dy < 100;
+      if (roof[i] === ROOF_MAST && (height[i] > 16 || close)) {
+        roof[i] = height[i] > 10 ? ROOF_DISH : 0;
+      }
+      if (pal[i] === C.CYAN && height[i] > 18) pal[i] = C.BLUE;
     }
   }
 
@@ -400,31 +667,29 @@ export function generateCity(seedStr, numericSeed) {
   for (let p = 0; p < plazaLots.length; p++) {
     const lot = plazaLots[p];
     const d = (lot.mx - spawnX) * (lot.mx - spawnX) + (lot.my - spawnY) * (lot.my - spawnY);
-    if (d < plazaBest) {
-      plazaBest = d;
+    const can5 = lot.maxx - lot.minx >= 6 && lot.maxy - lot.miny >= 6;
+    const score = d + (can5 ? 0 : 420);
+    if (score < plazaBest) {
+      plazaBest = score;
       plazaId = lot.id;
     }
   }
   if (plazaId) {
-    let minx = w;
-    let maxx = 0;
-    let miny = h;
-    let maxy = 0;
-    for (let i = 0; i < n; i++) {
-      if (bldg[i] !== plazaId || !solid[i]) continue;
-      const cx = i % w;
-      const cy = (i / w) | 0;
-      if (cx < minx) minx = cx;
-      if (cx > maxx) maxx = cx;
-      if (cy < miny) miny = cy;
-      if (cy > maxy) maxy = cy;
+    let lot = plazaLots[0];
+    for (let p = 0; p < plazaLots.length; p++) {
+      if (plazaLots[p].id === plazaId) lot = plazaLots[p];
     }
+    let minx = lot.minx;
+    let maxx = lot.maxx;
+    let miny = lot.miny;
+    let maxy = lot.maxy;
     const pcx = (minx + maxx) >> 1;
     const pcy = (miny + maxy) >> 1;
     plazaX = pcx + 0.5;
     plazaY = pcy + 0.5;
-    for (let y = pcy - 1; y <= pcy + 1; y++) {
-      for (let x = pcx - 1; x <= pcx + 1; x++) {
+    const rad = maxx - minx >= 5 && maxy - miny >= 5 ? 2 : 1;
+    for (let y = pcy - rad; y <= pcy + rad; y++) {
+      for (let x = pcx - rad; x <= pcx + rad; x++) {
         if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) continue;
         const i = y * w + x;
         if (solid[i] && bldg[i] !== plazaId) continue;
@@ -696,6 +961,8 @@ export function generateCity(seedStr, numericSeed) {
     spawnYaw,
     plazaX,
     plazaY,
+    landmarkX,
+    landmarkY,
     bridge,
     bridgePal,
     bridgePat,
@@ -719,4 +986,46 @@ export function floorAt(map, x, y) {
   const i = iy * map.w + ix;
   if (map.solid[i]) return -1;
   return map.floor[i];
+}
+
+export function placeName(map, x, y) {
+  const fl = floorAt(map, x, y);
+  if (fl === FLOOR_PLAZA) return "PLAZA";
+  if (fl === FLOOR_PARK) return "PARK";
+  if (fl === FLOOR_ALLEY) return "ALLEY";
+  const dx = x / map.w - 0.5;
+  const dy = y / map.h - 0.5;
+  const downtown = Math.max(0, 1 - Math.hypot(dx, dy) * 2);
+  if (downtown >= 0.45) return "DOWNTOWN";
+  return "BLOCKS";
+}
+
+export function bearingArrow(yaw, tx, ty, px, py) {
+  let ang = Math.atan2(ty - py, tx - px) - yaw;
+  while (ang > Math.PI) ang -= Math.PI * 2;
+  while (ang < -Math.PI) ang += Math.PI * 2;
+  if (Math.abs(ang) < 0.4) return "^";
+  if (Math.abs(ang) > 2.4) return "v";
+  return ang < 0 ? "<" : ">";
+}
+
+export function navLine(map, x, y, yaw) {
+  const marks = [];
+  if (map.plazaX && map.plazaY) {
+    const d = Math.hypot(map.plazaX - x, map.plazaY - y);
+    marks.push(
+      d < 1.6
+        ? { here: true, text: "PLAZA HERE" }
+        : { here: false, text: `PLAZA ${bearingArrow(yaw, map.plazaX, map.plazaY, x, y)}` }
+    );
+  }
+  if (map.landmarkX && map.landmarkY) {
+    const d = Math.hypot(map.landmarkX - x, map.landmarkY - y);
+    marks.push(
+      d < 2.4
+        ? { here: true, text: "TOWER HERE" }
+        : { here: false, text: `TOWER ${bearingArrow(yaw, map.landmarkX, map.landmarkY, x, y)}` }
+    );
+  }
+  return { place: placeName(map, x, y), marks };
 }

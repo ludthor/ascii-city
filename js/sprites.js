@@ -1,6 +1,7 @@
 import { mulberry32 } from "./rng.js";
 import { C, DIM_OF } from "./display.js";
 import { FLOOR_ALLEY, FLOOR_PARK, FLOOR_PLAZA, FLOOR_SIDEWALK, FLOOR_STREET } from "./city.js";
+import { glyphLit } from "./glyphs.js";
 
 export const KIND_SIGN = 0;
 export const KIND_SIGNAL = 1;
@@ -29,36 +30,6 @@ export const SIGN_LABELS = [
   "TAXI",
 ];
 
-const FONT5X7 = {
-  50: [0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f],
-  52: [0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02],
-  65: [0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
-  66: [0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e],
-  67: [0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e],
-  69: [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f],
-  70: [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10],
-  72: [0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
-  73: [0x0e, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e],
-  76: [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f],
-  77: [0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11],
-  78: [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
-  79: [0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
-  80: [0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10],
-  82: [0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11],
-  84: [0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
-  85: [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
-  86: [0x11, 0x11, 0x11, 0x11, 0x11, 0x0a, 0x04],
-  88: [0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11],
-};
-
-export function glyphLit(ch, lu, lv) {
-  const rows = FONT5X7[ch];
-  if (!rows || lu < 0 || lu > 1 || lv < 0 || lv > 1) return false;
-  const col = Math.min(4, (lu * 5) | 0);
-  const row = Math.min(6, (lv * 7) | 0);
-  return (rows[row] & (1 << (4 - col))) !== 0;
-}
-
 const PED_YIELD_R = 0.45;
 const CAR_BRAKE_AHEAD = 2.2;
 const CAR_BRAKE_HALF = 0.6;
@@ -83,6 +54,7 @@ const CH = {
   colon: 58,
   I: 73,
   tilde: 126,
+  star: 42,
 };
 
 function floorCell(map, x, y) {
@@ -279,6 +251,48 @@ function solidAhead(map, x, y, dx, dy) {
 
 function pedWalkable(fl) {
   return fl === FLOOR_SIDEWALK || fl === FLOOR_PARK || fl === FLOOR_ALLEY || fl === FLOOR_PLAZA;
+}
+
+function steerToward(map, s, tx, ty) {
+  if (!pedWalkable(floorCell(map, s.x, s.y))) {
+    const escape = [
+      [1, 0, 0],
+      [-1, 0, Math.PI],
+      [0, 1, Math.PI * 0.5],
+      [0, -1, -Math.PI * 0.5],
+    ];
+    for (let i = 0; i < 4; i++) {
+      if (pedWalkable(floorCell(map, s.x + escape[i][0] * 0.7, s.y + escape[i][1] * 0.7))) {
+        s.heading = escape[i][2];
+        return;
+      }
+    }
+  }
+  const dx = tx - s.x;
+  const dy = ty - s.y;
+  if (dx * dx + dy * dy < 0.04) return;
+  const ax = dx >= 0 ? 1 : -1;
+  const ay = dy >= 0 ? 1 : -1;
+  const xFirst = Math.abs(dx) >= Math.abs(dy);
+  const tries = xFirst
+    ? [
+        [ax, 0, ax > 0 ? 0 : Math.PI],
+        [0, ay, ay > 0 ? Math.PI * 0.5 : -Math.PI * 0.5],
+      ]
+    : [
+        [0, ay, ay > 0 ? Math.PI * 0.5 : -Math.PI * 0.5],
+        [ax, 0, ax > 0 ? 0 : Math.PI],
+      ];
+  for (let i = 0; i < tries.length; i++) {
+    const sx = tries[i][0];
+    const sy = tries[i][1];
+    const near = pedWalkable(floorCell(map, s.x + sx * 0.4, s.y + sy * 0.4));
+    const far = pedWalkable(floorCell(map, s.x + sx * 1.05, s.y + sy * 1.05));
+    if (near && far) {
+      s.heading = tries[i][2];
+      return;
+    }
+  }
 }
 
 function blockedByProp(sprites, x, y, skip, radius) {
@@ -578,8 +592,8 @@ export function generateSprites(map) {
       x: map.plazaX,
       y: map.plazaY,
       z: 0,
-      sprW: 0.28,
-      sprH: 1.35,
+      sprW: 0.7,
+      sprH: 1.22,
       phase: 0,
       color: C.CYAN,
       heading: 0,
@@ -587,7 +601,7 @@ export function generateSprites(map) {
     });
   }
 
-  const pedPool = sidewalks.concat(parks, plazas, alleys);
+  const pedPool = sidewalks.concat(parks, plazas);
   const pedCells = takeNearThenFar(rng, pedPool, spawnX, spawnY, 12, 22, 42);
   for (let i = 0; i < pedCells.length; i++) {
     const c = pedCells[i];
@@ -645,7 +659,32 @@ export function generateSprites(map) {
       speed: 0.45 + rng() * 0.3,
       idle: true,
       idleT: 1.2 + rng(),
+      errand: 2,
+      aimX: v.x,
+      aimY: v.y,
     });
+  }
+
+  for (let i = 0; i < sprites.length; i++) {
+    const s = sprites[i];
+    if (s.kind !== KIND_PED || s.errand) continue;
+    const r = rng();
+    const plazaNear =
+      map.plazaX && dist2(s.x, s.y, map.plazaX, map.plazaY) < 400;
+    if (r < 0.38 && plazaNear) {
+      s.errand = 1;
+      s.aimX = map.plazaX;
+      s.aimY = map.plazaY;
+      s.idle = false;
+    } else if (r < 0.58 && vendorSpots.length) {
+      const v = vendorSpots[(rng() * vendorSpots.length) | 0];
+      s.errand = 2;
+      s.aimX = v.x;
+      s.aimY = v.y;
+      s.idle = false;
+    } else {
+      s.errand = 0;
+    }
   }
 
   return sprites;
@@ -682,6 +721,11 @@ export function updateSprites(sprites, map, dt, night, player, time) {
     }
   }
 
+  const vendorList = [];
+  for (let i = 0; i < sprites.length; i++) {
+    if (sprites[i].kind === KIND_VENDOR) vendorList.push(sprites[i]);
+  }
+
   for (let i = 0; i < sprites.length; i++) {
     const s = sprites[i];
     if (s.kind === KIND_BEAM || s.speed <= 0) continue;
@@ -689,7 +733,49 @@ export function updateSprites(sprites, map, dt, night, player, time) {
 
     if (s.kind === KIND_PED) {
       s.idleT = (s.idleT || 0) - dt;
-      if (s.idleT <= 0) {
+      if (s.errand && s.aimX) {
+        const dAim = Math.hypot(s.aimX - s.x, s.aimY - s.y);
+        if (dAim < 1.35) {
+          if (!s.idle) {
+            s.idle = true;
+            s.idleT = 2.6 + (s.phase % 2);
+          } else if (s.idleT <= 0) {
+            if (s.errand === 1 && vendorList.length) {
+              let best = null;
+              let bestD = 400;
+              for (let k = 0; k < vendorList.length; k++) {
+                const v = vendorList[k];
+                const d = dist2(s.x, s.y, v.x, v.y);
+                if (d < bestD) {
+                  bestD = d;
+                  best = v;
+                }
+              }
+              if (best) {
+                s.errand = 2;
+                s.aimX = best.x;
+                s.aimY = best.y;
+              } else s.errand = 0;
+            } else if (map.plazaX && dist2(s.x, s.y, map.plazaX, map.plazaY) < 400) {
+              s.errand = 1;
+              s.aimX = map.plazaX;
+              s.aimY = map.plazaY;
+            } else {
+              s.errand = 0;
+            }
+            s.idle = false;
+            s.idleT = 5;
+            if (s.errand && s.aimX) steerToward(map, s, s.aimX, s.aimY);
+          }
+        } else {
+          s.idle = false;
+          s.steerT = (s.steerT || 0) - dt;
+          if (s.steerT <= 0) {
+            steerToward(map, s, s.aimX, s.aimY);
+            s.steerT = 0.85;
+          }
+        }
+      } else if (s.idleT <= 0) {
         if (!s.idle && nearHalt(sprites, map, s)) {
           s.idle = true;
           s.idleT = 1.1 + (s.phase % 1);
@@ -715,8 +801,13 @@ export function updateSprites(sprites, map, dt, night, player, time) {
     const fl = floorCell(map, nx, ny);
     const hitProp =
       s.kind === KIND_PED && blockedByProp(sprites, nx, ny, i, 0.28);
-    const ok =
+    let ok =
       !hitProp && (s.kind === KIND_CAR ? fl === FLOOR_STREET : pedWalkable(fl));
+    if (ok && s.kind === KIND_PED) {
+      const ax = nx + Math.cos(s.heading) * 0.4;
+      const ay = ny + Math.sin(s.heading) * 0.4;
+      if (!pedWalkable(floorCell(map, ax, ay))) ok = false;
+    }
     if (ok) {
       s.x = nx;
       s.y = ny;
@@ -726,6 +817,9 @@ export function updateSprites(sprites, map, dt, night, player, time) {
       const ly = s.y + Math.sin(left) * 0.55;
       if (floorCell(map, lx, ly) === FLOOR_STREET) s.heading = left;
       else s.heading += Math.PI;
+    } else if (s.kind === KIND_PED && s.errand && s.aimX) {
+      s.heading += (Math.PI / 2) * (s.phase > 3 ? 1 : -1);
+      s.steerT = 1.15;
     } else {
       s.heading += (Math.PI / 2) * (s.phase > 3 ? 1 : -1);
     }
@@ -864,13 +958,22 @@ function sampleSprite(spr, u, v, time, night) {
       return (CH.hash << 8) | C.GRAY;
     case KIND_STATUE: {
       const cx = u - 0.5;
-      if (v < 0.22) {
-        return Math.abs(cx) < 0.22 ? (CH.O << 8) | C.CYAN : 0;
+      const t = time || 0;
+      const spray = breath > 0.5 ? C.WHITE : C.CYAN;
+      const half = 0.07 + (1 - v) * (1 - v) * 0.48;
+      if (v > 0.18 && Math.abs(cx) < 0.04) {
+        const ch = v > 0.88 ? CH.colon : CH.pipe;
+        return (ch << 8) | (breath > 0.45 ? C.CYAN : C.CYAN_DIM);
       }
-      if (v < 0.72) {
-        return Math.abs(cx) < 0.1 ? (CH.pipe << 8) | C.CYAN_DIM : 0;
+      if (v < 0.78 && Math.abs(cx) < half) {
+        const edge = Math.abs(Math.abs(cx) - half) < 0.07;
+        const flick = ((u * 29 + v * 17 + ((t * 12 + spr.phase) | 0)) | 0) & 15;
+        if (edge ? flick < 11 : flick < 4) {
+          const ch = flick & 4 ? CH.star : flick & 2 ? CH.dot : CH.tilde;
+          return (ch << 8) | (flick & 8 ? spray : C.CYAN);
+        }
       }
-      return Math.abs(cx) < 0.2 ? (CH.hash << 8) | C.GRAY : 0;
+      return 0;
     }
     case KIND_TREE: {
       const cx = u - 0.5;
@@ -918,8 +1021,11 @@ function drawOrientedSign(s, cam, display, time, night, dirX, dirY, planeX, plan
   const colors = display.colors;
   const colZ = display.colZ;
   const half = s.sprW * 0.5;
-  const rx = s.faceY;
-  const ry = -s.faceX;
+  const rx0 = s.faceY;
+  const ry0 = -s.faceX;
+  const towardRight = rx0 * planeX + ry0 * planeY;
+  const rx = towardRight < 0 ? -rx0 : rx0;
+  const ry = towardRight < 0 ? -ry0 : ry0;
 
   function project(wx, wy) {
     const sx = wx - cam.x;

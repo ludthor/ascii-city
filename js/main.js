@@ -1,17 +1,17 @@
 import { hashString } from "./rng.js";
 import { Display } from "./display.js";
-import { generateCity, floorAt } from "./city.js?v=span8";
+import { generateCity, floorAt, navLine } from "./city.js?v=sign2";
 import { createInput } from "./input.js?v=park3";
-import { createPlayer, updatePlayer, unstickPlayer } from "./player.js?v=life6";
-import { renderFrame, drawRain, drawCrosshair, drawMinimap } from "./raycast.js?v=span8";
+import { createPlayer, updatePlayer, unstickPlayer } from "./player.js?v=sky1";
+import { renderFrame, drawRain, drawCrosshair, drawMinimap } from "./raycast.js?v=sign2";
 import {
   generateSprites,
   updateSprites,
   drawSprites,
   lookAtSign,
   nearestMovingCarDist,
-} from "./sprites.js?v=brake1";
-import { createAmbience } from "./audio.js?v=life7";
+} from "./sprites.js?v=sign2";
+import { createAmbience } from "./audio.js?v=mood6";
 import { nightAt } from "./night.js";
 
 const canvas = document.getElementById("view");
@@ -21,6 +21,7 @@ const hudFps = document.getElementById("hud-fps");
 const overlaySeed = document.getElementById("overlay-seed");
 const hudHint = document.getElementById("hud-hint");
 const hudLook = document.getElementById("hud-look");
+const hudPlace = document.getElementById("hud-place");
 
 const params = new URLSearchParams(location.search);
 let seed = params.get("seed");
@@ -111,12 +112,20 @@ function frame(now) {
   const look = lookAtSign(sprites, player);
   if (hudLook.textContent !== look) hudLook.textContent = look;
 
+  const nav = navLine(city, player.x, player.y, player.yaw);
+  const bear = nav.marks
+    .map((m) => (m.here ? `<span class="hud-here">${m.text}</span>` : m.text))
+    .join("  ");
+  const placeHtml = bear ? `${nav.place} <span class="hud-bear">${bear}</span>` : nav.place;
+  if (hudPlace.innerHTML !== placeHtml) hudPlace.innerHTML = placeHtml;
+
+  const zone = floorAt(city, player.x, player.y);
   ambience.tick(
     night,
     {
       carDist: nearestMovingCarDist(sprites, player.x, player.y),
       honk,
-      floor: floorAt(city, player.x, player.y),
+      floor: zone,
       moving: player.moving,
       sprint: input.state.sprint,
       look,
@@ -124,7 +133,7 @@ function frame(now) {
     dt
   );
   renderFrame(city, player, display, t, night);
-  drawRain(display, t, night);
+  drawRain(display, t, night, zone);
   drawSprites(sprites, player, display, t, night);
   drawCrosshair(display);
   if (input.state.minimap) drawMinimap(city, player, display, sprites);

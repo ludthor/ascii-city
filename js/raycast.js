@@ -1,13 +1,22 @@
 import { hash2 } from "./rng.js";
 import { C, DIM_OF } from "./display.js";
-import { FLOOR_ALLEY, FLOOR_PARK, FLOOR_PLAZA, FLOOR_SIDEWALK, FLOOR_STREET } from "./city.js";
+import { FLOOR_ALLEY, FLOOR_PARK, FLOOR_PLAZA, FLOOR_SIDEWALK, FLOOR_STREET, floorAt } from "./city.js";
+import { glyphLit, BOARD_WORDS } from "./glyphs.js";
 
 const ROOF_MAST = 1;
 const ROOF_DISH = 2;
+const ROOF_BOARD = 3;
 
 const MAX_STEPS = 96;
 const FOG_START = 10;
 const FOG_END = 36;
+const FOG_ALLEY_START = 1.8;
+const FOG_ALLEY_END = 11;
+
+let fogStart = FOG_START;
+let fogEnd = FOG_END;
+let fogAlley = false;
+let fogPlaza = false;
 
 const CH = {
   space: 32,
@@ -144,7 +153,7 @@ function faceU(side, posX, posY, rayDirX, rayDirY, dist) {
 }
 
 function paintSpanFace(chars, colors, cols, rows, horizon, eye, dist, night, x, span, u, portal) {
-  if (dist < 0.55 || dist > FOG_END) return;
+  if (dist < 0.55 || dist > fogEnd) return;
   const top = horizon - ((span.z1 - eye) * rows) / dist;
   const bot = horizon - ((span.z0 - eye) * rows) / dist;
   const y0 = Math.max(0, top | 0);
@@ -164,7 +173,7 @@ function paintSpanFace(chars, colors, cols, rows, horizon, eye, dist, night, x, 
 
 function drawSpanBox(chars, colors, cols, rows, horizon, eye, night, x, posX, posY, rayDirX, rayDirY, wallDist, span, hit) {
   const near = Math.max(0.55, hit.tNear);
-  const far = Math.min(hit.tFar, wallDist, FOG_END);
+  const far = Math.min(hit.tFar, wallDist, fogEnd);
   if (far <= near) return;
   const breath = night ? night.breath : 0.5;
 
@@ -240,32 +249,189 @@ function drawMapSpans(chars, colors, cols, rows, horizon, eye, night, x, map, po
   }
 }
 
+function setZoneFog(floor) {
+  fogAlley = floor === FLOOR_ALLEY;
+  fogPlaza = floor === FLOOR_PLAZA;
+  if (fogAlley) {
+    fogStart = FOG_ALLEY_START;
+    fogEnd = FOG_ALLEY_END;
+  } else {
+    fogStart = FOG_START;
+    fogEnd = FOG_END;
+  }
+}
+
 function fogColor(color, dist) {
-  const t = clamp01((dist - FOG_START) / (FOG_END - FOG_START));
+  const t = clamp01((dist - fogStart) / (fogEnd - fogStart || 1));
   if (t <= 0) return color;
-  if (t > 0.55) return DIM_OF[DIM_OF[color]];
-  if (t > 0.22) return DIM_OF[color];
+  if (t > 0.82) {
+    if (fogAlley) return C.MAGENTA_DIM;
+    if (fogPlaza) return C.GOLD_DIM;
+    return C.BLACK;
+  }
+  if (fogAlley && color === C.MAGENTA) {
+    if (t > 0.58) return C.MAGENTA_DIM;
+    return C.MAGENTA;
+  }
+  if (t > 0.48) {
+    if (fogAlley) return C.MAGENTA;
+    if (fogPlaza) return color === C.YELLOW ? C.AMBER : C.GOLD_DIM;
+    return DIM_OF[DIM_OF[color]];
+  }
+  if (t > 0.16) {
+    if (fogAlley && (color === C.GRAY || color === C.CYAN || color === C.CYAN_DIM || color === C.BLUE_DEEP)) {
+      return C.MAGENTA;
+    }
+    if (fogPlaza && (color === C.GRAY || color === C.CYAN || color === C.CYAN_DIM)) {
+      return C.AMBER;
+    }
+    return DIM_OF[color];
+  }
   return color;
 }
 
 function fogChar(ch, dist) {
-  const t = clamp01((dist - FOG_START) / (FOG_END - FOG_START));
-  if (t > 0.92) return CH.dot;
-  if (t > 0.62 && (ch === CH.H || ch === CH.M || ch === CH.eight || ch === CH.O || ch === CH.X)) {
+  const t = clamp01((dist - fogStart) / (fogEnd - fogStart || 1));
+  if (t > 0.78) return fogAlley ? CH.dot : CH.space;
+  if (t > 0.48) return CH.dot;
+  if (t > 0.28 && (ch === CH.H || ch === CH.M || ch === CH.eight || ch === CH.O || ch === CH.X)) {
     return CH.colon;
   }
   return ch;
 }
 
-function extraRoof(map, mapX, mapY, wallX) {
+function openFloorAt(map, x, y) {
+  if (x < 0 || y < 0 || x >= map.w || y >= map.h) return -1;
+  const i = y * map.w + x;
+  if (map.solid[i]) return -1;
+  return map.floor[i];
+}
+
+function isPublicFloor(fl) {
+  return fl === FLOOR_STREET || fl === FLOOR_SIDEWALK || fl === FLOOR_PLAZA || fl === FLOOR_PARK;
+}
+
+function pickWord(seed, x, y) {
+  return BOARD_WORDS[hash2(seed, x * 3 + 1, y * 7 + 2) % BOARD_WORDS.length];
+}
+
+function packedSign(wallX, worldZ, x0, x1, z0, z1, word, ink, frame, fill) {
+  if (wallX < x0 || wallX > x1 || worldZ < z0 || worldZ > z1) return 0;
+  const u = (wallX - x0) / Math.max(1e-6, x1 - x0);
+  const span = Math.max(1e-6, z1 - z0);
+  if (u < 0.08 || u > 0.92) return (CH.pipe << 8) | frame;
+  if (worldZ < z0 + span * 0.14 || worldZ > z1 - span * 0.14) return (CH.eq << 8) | frame;
+  const n = word.length;
+  const t = (u - 0.12) / 0.76;
+  if (t >= 0 && t <= 1 && n) {
+    const i = Math.min(n - 1, (t * n) | 0);
+    const local = t * n - i;
+    if (local > 0.1 && local < 0.9) {
+      const lu = (local - 0.1) / 0.8;
+      const lv = (z1 - span * 0.14 - worldZ) / (span * 0.72);
+      if (glyphLit(word.charCodeAt(i), lu, lv)) return (CH.hash << 8) | ink;
+    }
+  }
+  return fill;
+}
+
+function extraRoof(map, mapX, mapY, wallX, fromFloor) {
   if (!map.roof || mapX < 0 || mapY < 0 || mapX >= map.w || mapY >= map.h) return 0;
   const r = map.roof[mapY * map.w + mapX];
   if (r === ROOF_MAST && wallX > 0.42 && wallX < 0.58) return 1.7;
   if (r === ROOF_DISH && wallX > 0.22 && wallX < 0.78) return 0.32;
+  if (r === ROOF_BOARD && isPublicFloor(fromFloor) && wallX > 0.1 && wallX < 0.9) return 0.9;
   return 0;
 }
 
-function sampleWall(map, mapX, mapY, side, wallX, v, dist, night, drawH) {
+function sampleWindows(map, mapX, mapY, pat, pal, office, warm, wallX, worldZ, bodyH, breath, h0) {
+  const floorH = 0.34;
+  const story = Math.max(0, (worldZ / floorH) | 0);
+  const fv = (worldZ - story * floorH) / floorH;
+  const h = hash2(map.numericSeed, mapX * 17 + story, mapY * 11 + ((wallX * 8) | 0));
+  let ch = CH.pipe;
+  let color = DIM_OF[pal];
+
+  if (pat === 5) {
+    ch = h0 & 2 ? CH.H : CH.hash;
+    color = DIM_OF[pal];
+    if (fv > 0.4 && fv < 0.68 && (story & 1)) {
+      ch = CH.dash;
+      color = C.GRAY;
+    }
+  } else if (pat === 6) {
+    const nWin = 2;
+    const winCol = Math.min(nWin - 1, (wallX * nWin) | 0);
+    const u = wallX * nWin - winCol;
+    const inPane = u > 0.1 && u < 0.9 && fv > 0.14 && fv < 0.9 && story % 3 !== 1;
+    ch = CH.pipe;
+    if (inPane) {
+      ch = h & 2 ? CH.colon : CH.dot;
+      color = (h & 7) === 0 ? C.WHITE : office ? C.CYAN_DIM : C.GRAY;
+    }
+  } else if (pat === 8) {
+    const nWin = 2;
+    const winCol = Math.min(nWin - 1, (wallX * nWin) | 0);
+    const u = wallX * nWin - winCol;
+    const inPane = u > 0.28 && u < 0.72 && fv > 0.28 && fv < 0.78;
+    ch = CH.pipe;
+    if (inPane) {
+      ch = fv > 0.42 && fv < 0.62 ? CH.O : CH.o;
+      color = breath > 0.5 ? (warm ? C.YELLOW : C.CYAN) : pal;
+    }
+  } else if (pat === 9) {
+    ch = fv > 0.32 && fv < 0.7 ? CH.dash : CH.pipe;
+    color = fv > 0.32 && fv < 0.7 ? C.GRAY : DIM_OF[pal];
+  } else if (pat === 10) {
+    const nWin = 4;
+    const winCol = Math.min(nWin - 1, (wallX * nWin) | 0);
+    const u = wallX * nWin - winCol;
+    const inPane = u > 0.14 && u < 0.88 && fv > 0.18 && fv < 0.86;
+    if (fv < 0.12 || fv > 0.9) {
+      ch = CH.dash;
+      color = DIM_OF[pal];
+    } else {
+      ch = CH.pipe;
+      if (inPane) {
+        ch = h & 2 ? CH.colon : CH.dot;
+        color = office ? C.CYAN_DIM : C.AMBER;
+      }
+    }
+  } else {
+    const nWin = pat === 1 ? 3 : pat === 2 ? 2 : pat === 3 ? 5 : 4;
+    const winCol = Math.min(nWin - 1, (wallX * nWin) | 0);
+    const u = wallX * nWin - winCol;
+    const ribbon = pat === 4;
+    const inPane = ribbon
+      ? fv > 0.32 && fv < 0.7 && u > 0.08 && u < 0.92
+      : u > 0.14 && u < 0.88 && fv > 0.18 && fv < 0.86;
+    ch = CH.pipe;
+    if (inPane) {
+      const lit = (h & 15) < (office ? 3 : 2);
+      const bright = (h & 31) === 0;
+      if (lit || bright) {
+        ch = bright ? CH.colon : CH.o;
+        if (bright) color = C.WHITE;
+        else if (pal === C.ORANGE) color = h & 4 ? C.ORANGE : C.RED;
+        else if (warm) color = h & 4 ? C.YELLOW : C.AMBER;
+        else color = h & 4 ? C.CYAN : C.CYAN_DIM;
+      } else {
+        ch = CH.dot;
+        color = office ? C.BLUE_DEEP : C.GRAY;
+      }
+    } else if (pat === 2 && story & 1) {
+      ch = CH.H;
+    }
+  }
+
+  if (bodyH > 12 && worldZ > bodyH - 0.16 && pat !== 7) {
+    ch = CH.dash;
+    color = breath > 0.55 ? (office ? C.CYAN : C.MAGENTA) : DIM_OF[pal];
+  }
+  return { ch, color };
+}
+
+function sampleWall(map, mapX, mapY, side, wallX, v, dist, night, drawH, signU, fromFloor) {
   const i = mapY * map.w + mapX;
   const pal = map.pal[i] || C.BLUE;
   const pat = map.pattern[i];
@@ -277,6 +443,12 @@ function sampleWall(map, mapX, mapY, side, wallX, v, dist, night, drawH) {
   const buzz = night ? night.buzz : 0.5;
   const office = pal === C.CYAN || pal === C.BLUE || pal === C.BLUE_DEEP;
   const warm = pal === C.YELLOW || pal === C.AMBER || pal === C.ORANGE || pal === C.MAGENTA;
+  const media = pat === 7;
+  const faceId = hash2(map.numericSeed, mapX, mapY);
+  const ink = breath > 0.5 ? (warm ? C.YELLOW : C.MAGENTA) : C.AMBER;
+  const fillBoard = (CH.dot << 8) | C.BLUE_DEEP;
+  const publicFace = isPublicFloor(fromFloor);
+  const su = signU == null ? wallX : signU;
 
   let color = pal;
   let ch = CH.pipe;
@@ -286,6 +458,25 @@ function sampleWall(map, mapX, mapY, side, wallX, v, dist, night, drawH) {
     if (r === ROOF_MAST) {
       ch = CH.pipe;
       color = breath > 0.5 ? C.CYAN : C.CYAN_DIM;
+    } else if (r === ROOF_BOARD && publicFace) {
+      const packed =
+        packedSign(
+          su,
+          worldZ,
+          0.08,
+          0.92,
+          bodyH + 0.04,
+          colH - 0.02,
+          pickWord(map.numericSeed, mapX, mapY),
+          ink,
+          ink,
+          fillBoard
+        ) || fillBoard;
+      ch = packed >> 8;
+      color = packed & 255;
+    } else if (r === ROOF_BOARD) {
+      ch = CH.pipe;
+      color = C.GRAY;
     } else {
       ch = worldZ > bodyH + 0.14 ? CH.o : CH.O;
       color = breath > 0.55 ? C.CYAN_DIM : C.GRAY;
@@ -295,66 +486,86 @@ function sampleWall(map, mapX, mapY, side, wallX, v, dist, night, drawH) {
     ch = g & 1 ? CH.o : CH.dot;
     color = g & 2 ? C.LIME : C.GREEN_DIM;
   } else if (
+    !media &&
+    publicFace &&
     map.neon[i] &&
-    wallX > 0.08 &&
-    wallX < 0.2 &&
-    worldZ >= 0.4 &&
-    worldZ < 2.25 &&
-    (hash2(map.numericSeed, mapX, mapY) & 3) === 0
+    (faceId & 3) === 0 &&
+    wallX > 0.03 &&
+    wallX < 0.11 &&
+    worldZ >= 0.35 &&
+    worldZ < Math.min(3.8, bodyH * 0.42)
   ) {
-    ch = ((worldZ * 5) | 0) % 2 === 0 ? CH.dash : CH.pipe;
-    color = C.GRAY;
-  } else if (map.neon[i] && worldZ >= 0.95 && worldZ < 2.2) {
-    const row = ((worldZ - 0.95) * 3.6) | 0;
-    ch = row % 2 === 0 ? CH.eq : CH.hash;
-    const chatter = buzz > 0.88 && (h0 & 15) === 0;
-    if (chatter) {
-      ch = CH.dot;
-      color = C.MAGENTA_DIM;
-    } else if (breath > 0.62) {
-      color = warm ? C.MAGENTA : C.CYAN;
-    } else if (breath > 0.32) {
-      color = warm ? C.MAGENTA : C.CYAN_DIM;
+    ch = ((worldZ * 6) | 0) % 2 === 0 ? CH.dash : CH.pipe;
+    color = breath > 0.5 ? (warm ? C.MAGENTA : C.CYAN) : warm ? C.MAGENTA_DIM : C.CYAN_DIM;
+  } else if (media && worldZ <= bodyH) {
+    const panelH = 3.4;
+    const panel = Math.max(0, (worldZ / panelH) | 0);
+    const pz = worldZ - panel * panelH;
+    const scan = (worldZ * 5.4) | 0;
+    const fill = ((scan & 1 ? CH.dash : CH.dot) << 8) | C.BLUE_DEEP;
+    if (pz < 0.12 || pz > panelH - 0.12) {
+      ch = CH.eq;
+      color = C.GRAY;
+    } else if (wallX < 0.07 || wallX > 0.93) {
+      ch = CH.pipe;
+      color = C.GRAY;
+    } else if (publicFace) {
+      const chatter = buzz > 0.9 && (faceId & 7) === 0;
+      const packed =
+        packedSign(
+          su,
+          pz,
+          0.14,
+          0.86,
+          0.55,
+          2.55,
+          pickWord(map.numericSeed, mapX + panel * 13, mapY),
+          chatter ? C.WHITE : breath > 0.55 ? C.MAGENTA : C.YELLOW,
+          C.MAGENTA,
+          fill
+        ) || fill;
+      ch = packed >> 8;
+      color = packed & 255;
     } else {
-      color = C.MAGENTA_DIM;
+      const win = sampleWindows(map, mapX, mapY, pat, pal, office, warm, wallX, worldZ, bodyH, breath, h0);
+      ch = win.ch;
+      color = win.color;
+    }
+  } else if (
+    publicFace &&
+    !media &&
+    bodyH > 11 &&
+    (faceId & 7) === 2 &&
+    wallX > 0.12 &&
+    wallX < 0.88
+  ) {
+    const z0 = bodyH * 0.5;
+    const z1 = z0 + 1.2;
+    if (worldZ >= z0 && worldZ <= z1) {
+      const packed =
+        packedSign(
+          su,
+          worldZ,
+          0.12,
+          0.88,
+          z0,
+          z1,
+          pickWord(map.numericSeed, mapX + 9, mapY),
+          ink,
+          ink,
+          fillBoard
+        ) || fillBoard;
+      ch = packed >> 8;
+      color = packed & 255;
+    } else {
+      const win = sampleWindows(map, mapX, mapY, pat, pal, office, warm, wallX, worldZ, bodyH, breath, h0);
+      ch = win.ch;
+      color = win.color;
     }
   } else {
-    const floorH = 0.34;
-    const story = Math.max(0, (worldZ / floorH) | 0);
-    const fv = (worldZ - story * floorH) / floorH;
-    const nWin = pat === 1 ? 3 : pat === 2 ? 2 : pat === 3 ? 5 : 4;
-    const winCol = Math.min(nWin - 1, (wallX * nWin) | 0);
-    const u = wallX * nWin - winCol;
-    const h = hash2(map.numericSeed, mapX * 17 + story, mapY * 11 + winCol);
-    const strip = pat === 4;
-    const inPane = strip
-      ? fv > 0.30 && fv < 0.76 && u > 0.05 && u < 0.95
-      : u > 0.12 && u < 0.90 && fv > 0.16 && fv < 0.90;
-
-    color = DIM_OF[pal];
-    ch = CH.pipe;
-    if (inPane) {
-      const lit = (h & 15) < (office ? 3 : 2);
-      const bright = (h & 31) === 0;
-      if (lit || bright) {
-        ch = bright ? CH.colon : h & 2 ? CH.o : CH.hash;
-        if (bright) color = C.WHITE;
-        else if (pal === C.ORANGE) color = h & 4 ? C.ORANGE : C.RED;
-        else if (warm) color = h & 4 ? C.YELLOW : C.AMBER;
-        else color = h & 4 ? C.CYAN : C.WHITE;
-      } else {
-        ch = h & 1 ? CH.colon : CH.dot;
-        color = office ? C.BLUE_DEEP : C.GRAY;
-      }
-    } else if (pat === 2 && story & 1) {
-      ch = CH.H;
-    }
-    if (bodyH > 12 && worldZ > bodyH - 0.55) {
-      ch = breath > 0.5 ? CH.eq : CH.dash;
-      if (breath > 0.6) color = office ? C.CYAN : C.MAGENTA;
-      else if (breath > 0.3) color = office ? C.CYAN_DIM : C.MAGENTA_DIM;
-      else color = DIM_OF[pal];
-    }
+    const win = sampleWindows(map, mapX, mapY, pat, pal, office, warm, wallX, worldZ, bodyH, breath, h0);
+    ch = win.ch;
+    color = win.color;
   }
 
   if (wallX < 0.07 || wallX > 0.93) {
@@ -377,6 +588,19 @@ function sampleWall(map, mapX, mapY, side, wallX, v, dist, night, drawH) {
   }
 
   if (side === 1) color = DIM_OF[color];
+
+  if (fromFloor === FLOOR_PLAZA && worldZ < 0.55 && worldZ <= bodyH) {
+    if (!(worldZ < 0.38 && map.foliage[i])) {
+      ch = breath > 0.5 ? CH.eq : CH.plus;
+      color = breath > 0.45 ? C.YELLOW : C.AMBER;
+    }
+  } else if (fromFloor === FLOOR_PARK && worldZ < 0.55 && worldZ <= bodyH) {
+    if (!(worldZ < 0.38 && map.foliage[i])) {
+      ch = h0 & 1 ? CH.o : CH.star;
+      color = C.LIME;
+    }
+  }
+
   color = fogColor(color, dist);
   ch = fogChar(ch, dist);
   return (ch << 8) | color;
@@ -388,12 +612,34 @@ function parkAt(map, x, y) {
   return !map.solid[i] && map.floor[i] === FLOOR_PARK;
 }
 
+function fountainFloor(map, fx, fy, night) {
+  if (!map.plazaX || !map.plazaY) return 0;
+  const dx = fx - map.plazaX;
+  const dy = fy - map.plazaY;
+  const r2 = dx * dx + dy * dy;
+  if (r2 > 0.62) return 0;
+  const r = Math.sqrt(r2);
+  const breath = night ? night.breath : 0.5;
+  if (r > 0.54) {
+    return (CH.O << 8) | (breath > 0.5 ? C.CYAN : C.CYAN_DIM);
+  }
+  if (r < 0.1) {
+    return (CH.hash << 8) | C.GRAY;
+  }
+  const ripple = ((fx * 11 + fy * 8) | 0) & 1;
+  if (night && night.buzz > 0.82) return (CH.eq << 8) | C.WHITE;
+  const ch = ripple ? CH.tilde : CH.colon;
+  return (ch << 8) | (breath > 0.55 ? C.CYAN : C.CYAN_DIM);
+}
+
 function sampleFloor(map, fx, fy, dist, night) {
   const ix = Math.floor(fx);
   const iy = Math.floor(fy);
   if (ix < 0 || iy < 0 || ix >= map.w || iy >= map.h) {
     return (CH.space << 8) | C.BLACK;
   }
+  const pool = fountainFloor(map, fx, fy, night);
+  if (pool) return pool;
   const i = iy * map.w + ix;
   const type = map.floor[i];
   const fracx = fx - ix;
@@ -414,10 +660,10 @@ function sampleFloor(map, fx, fy, dist, night) {
     if (onPath) {
       const grid = fracx < 0.1 || fracy < 0.1;
       ch = grid ? CH.colon : CH.dot;
-      color = grid ? C.CYAN_DIM : C.GRAY;
-      if ((h & 7) === 0 && dist < 12) {
+      color = grid ? C.LIME : C.GREEN_DIM;
+      if ((h & 7) === 0 && dist < 16) {
         ch = CH.tilde;
-        color = breath > 0.5 ? C.CYAN : C.CYAN_DIM;
+        color = breath > 0.5 ? C.LIME : C.GREEN_DIM;
       }
     } else if (edge && (fracx < 0.12 || fracy < 0.12 || fracx > 0.88 || fracy > 0.88)) {
       ch = CH.colon;
@@ -433,20 +679,38 @@ function sampleFloor(map, fx, fy, dist, night) {
       }
     }
   } else if (type === FLOOR_ALLEY) {
-    const grid = fracx < 0.1 || fracy < 0.1;
-    ch = grid ? CH.colon : CH.dot;
-    color = C.GRAY;
-    if ((h & 7) === 0 && dist < 10) {
-      ch = CH.tilde;
+    const ripple = Math.abs(Math.sin(fx * 7.2 + fy * 5.1));
+    const grid = fracx < 0.16 || fracy < 0.16;
+    const puddle = ripple > 0.28 || (h & 1) === 0;
+    if (puddle) {
+      if (ripple > 0.68) {
+        ch = CH.eq;
+        color = C.WHITE;
+      } else {
+        ch = ((fx * 5 + fy * 3) | 0) & 1 ? CH.tilde : CH.colon;
+        color = C.MAGENTA;
+      }
+    } else if (grid) {
+      ch = CH.colon;
+      color = C.MAGENTA;
+    } else {
+      ch = CH.dot;
       color = C.MAGENTA_DIM;
     }
   } else if (type === FLOOR_PLAZA) {
-    const grid = fracx < 0.08 || fracy < 0.08 || fracx > 0.92 || fracy > 0.92;
-    ch = grid ? CH.eq : CH.dot;
-    color = grid ? C.AMBER : C.GOLD_DIM;
-    if ((h & 7) === 0) {
+    const breath = night ? night.breath : 0.5;
+    const rim = 0.14 + breath * 0.32;
+    const grid = fracx < rim || fracy < rim || fracx > 1 - rim || fracy > 1 - rim;
+    if (grid) {
+      ch = CH.eq;
+      color = breath > 0.45 ? C.YELLOW : C.AMBER;
+    } else {
+      ch = breath > 0.62 ? CH.plus : CH.dot;
+      color = breath > 0.5 ? C.AMBER : C.GOLD_DIM;
+    }
+    if ((h & 3) === 0 || (breath > 0.7 && (h & 1) === 0)) {
       ch = CH.plus;
-      color = C.YELLOW;
+      color = breath > 0.4 ? C.YELLOW : C.AMBER;
     }
   } else if (type === FLOOR_SIDEWALK) {
     const grid = fracx < 0.08 || fracy < 0.08 || fracx > 0.92 || fracy > 0.92;
@@ -507,6 +771,7 @@ export function renderFrame(map, cam, display, time, night) {
   colors.fill(0);
   const colZ = display.colZ;
   colZ.fill(1e9);
+  setZoneFog(floorAt(map, cam.x, cam.y));
 
   const horizon = rows * 0.5 + cam.pitch * rows * 0.5;
   const posX = cam.x;
@@ -585,9 +850,14 @@ export function renderFrame(map, cam, display, time, night) {
       if (side === 0) wallX = posY + perpWallDist * rayDirY;
       else wallX = posX + perpWallDist * rayDirX;
       wallX -= Math.floor(wallX);
-      if ((side === 0 && rayDirX > 0) || (side === 1 && rayDirY < 0)) wallX = 1 - wallX;
+      const texFlip = (side === 0 && rayDirX > 0) || (side === 1 && rayDirY < 0);
+      if (texFlip) wallX = 1 - wallX;
+      const signU = texFlip ? wallX : 1 - wallX;
+      const fromX = side === 0 ? mapX - stepX : mapX;
+      const fromY = side === 1 ? mapY - stepY : mapY;
+      const fromFloor = inBounds ? openFloorAt(map, fromX, fromY) : -1;
 
-      const drawH = bHeight + extraRoof(map, mapX, mapY, wallX);
+      const drawH = bHeight + extraRoof(map, mapX, mapY, wallX, fromFloor);
       const wallTop = horizon - ((drawH - eye) * rows) / perpWallDist;
       const wallBot = horizon + (eye * rows) / perpWallDist;
 
@@ -599,11 +869,22 @@ export function renderFrame(map, cam, display, time, night) {
         if (y < 0 || y >= rows) continue;
         const v = (y - wallTop) / span;
         const packed = inBounds
-          ? sampleWall(map, mapX, mapY, side, wallX, v, perpWallDist, night, drawH)
+          ? sampleWall(map, mapX, mapY, side, wallX, v, perpWallDist, night, drawH, signU, fromFloor)
           : (CH.pipe << 8) | fogColor(C.BLUE_DEEP, perpWallDist);
         const i = y * cols + x;
         chars[i] = packed >> 8;
         colors[i] = packed & 255;
+      }
+
+      if (fogAlley || fogPlaza) {
+        for (let y = 0; y < y0; y++) {
+          const i = y * cols + x;
+          if (chars[i] !== 32) continue;
+          if ((hash2(x * 13 + y, (time * 4) | 0, mapX) & 15) < (fogPlaza ? 4 : 3)) {
+            chars[i] = CH.dot;
+            colors[i] = fogAlley ? C.MAGENTA : C.YELLOW;
+          }
+        }
       }
 
       const abut = spanAbutment(map.spans, mapX, mapY, side);
@@ -615,7 +896,7 @@ export function renderFrame(map, cam, display, time, night) {
         const denom = y - horizon;
         if (denom <= 0.35) continue;
         const rowDist = (eye * rows) / denom;
-        if (rowDist > FOG_END + 4) continue;
+        if (rowDist > fogEnd + 2) continue;
         const fx = posX + rayDirX * rowDist;
         const fy = posY + rayDirY * rowDist;
         const packed = sampleFloor(map, fx, fy, rowDist, night);
@@ -644,7 +925,7 @@ export function renderFrame(map, cam, display, time, night) {
 
         let perp2 = side === 0 ? sideDistX - deltaDistX : sideDistY - deltaDistY;
         if (perp2 < 0.08) perp2 = 0.08;
-        if (perp2 > FOG_END) break;
+        if (perp2 > fogEnd) break;
 
         const in2 = !oob;
         const h2 = in2 ? map.height[mapY * w + mapX] || 8 : 18;
@@ -652,8 +933,13 @@ export function renderFrame(map, cam, display, time, night) {
         if (side === 0) wallX2 = posY + perp2 * rayDirY;
         else wallX2 = posX + perp2 * rayDirX;
         wallX2 -= Math.floor(wallX2);
-        if ((side === 0 && rayDirX > 0) || (side === 1 && rayDirY < 0)) wallX2 = 1 - wallX2;
-        const drawH2 = h2 + extraRoof(map, mapX, mapY, wallX2);
+        const texFlip2 = (side === 0 && rayDirX > 0) || (side === 1 && rayDirY < 0);
+        if (texFlip2) wallX2 = 1 - wallX2;
+        const signU2 = texFlip2 ? wallX2 : 1 - wallX2;
+        const fromX2 = side === 0 ? mapX - stepX : mapX;
+        const fromY2 = side === 1 ? mapY - stepY : mapY;
+        const fromFloor2 = in2 ? openFloorAt(map, fromX2, fromY2) : -1;
+        const drawH2 = h2 + extraRoof(map, mapX, mapY, wallX2, fromFloor2);
         const top2 = horizon - ((drawH2 - eye) * rows) / perp2;
         const bot2 = horizon + (eye * rows) / perp2;
         const y0n = top2 < 0 ? 0 : top2 | 0;
@@ -665,7 +951,7 @@ export function renderFrame(map, cam, display, time, night) {
           if (y < 0 || y >= rows) continue;
           const v = (y - top2) / span2;
           const packed = in2
-            ? sampleWall(map, mapX, mapY, side, wallX2, v, perp2, night, drawH2)
+            ? sampleWall(map, mapX, mapY, side, wallX2, v, perp2, night, drawH2, signU2, fromFloor2)
             : (CH.pipe << 8) | fogColor(C.BLUE_DEEP, perp2);
           const i = y * cols + x;
           chars[i] = packed >> 8;
@@ -676,10 +962,10 @@ export function renderFrame(map, cam, display, time, night) {
 
       for (let y = 0; y < yMin && y < rows; y++) {
         const flash = night && night.thunder > 0.2;
-        if ((hash2(x, y, (cam.yaw * 20) | 0) & 255) < (flash ? 18 : 3)) {
+        if ((hash2(x, y, (cam.yaw * 20) | 0) & 255) < (flash ? 18 : fogAlley ? 16 : fogPlaza ? 14 : 3)) {
           const i = y * cols + x;
           chars[i] = CH.dot;
-          colors[i] = flash ? C.WHITE : C.GRAY;
+          colors[i] = flash ? C.WHITE : fogAlley ? C.MAGENTA : fogPlaza ? C.YELLOW : C.GRAY;
         }
       }
     } else {
@@ -687,16 +973,16 @@ export function renderFrame(map, cam, display, time, night) {
       for (let y = 0; y < rows; y++) {
         if (y < horizon) {
           const flash = night && night.thunder > 0.2;
-          if ((hash2(x, y, (cam.yaw * 20) | 0) & 255) < (flash ? 18 : 3)) {
+          if ((hash2(x, y, (cam.yaw * 20) | 0) & 255) < (flash ? 18 : fogAlley ? 16 : fogPlaza ? 14 : 3)) {
             const i = y * cols + x;
             chars[i] = CH.dot;
-            colors[i] = flash ? C.WHITE : C.GRAY;
+            colors[i] = flash ? C.WHITE : fogAlley ? C.MAGENTA : fogPlaza ? C.YELLOW : C.GRAY;
           }
         } else {
           const denom = y - horizon;
           if (denom <= 0.35) continue;
           const rowDist = (eye * rows) / denom;
-          if (rowDist > FOG_END + 4) continue;
+          if (rowDist > fogEnd + 2) continue;
           const fx = posX + rayDirX * rowDist;
           const fy = posY + rayDirY * rowDist;
           const packed = sampleFloor(map, fx, fy, rowDist, night);
@@ -711,19 +997,23 @@ export function renderFrame(map, cam, display, time, night) {
   }
 }
 
-export function drawRain(display, time, night) {
+export function drawRain(display, time, night, floor) {
   const cols = display.cols;
   const rows = display.rows;
   const chars = display.chars;
   const colors = display.colors;
   const breath = night ? night.breath : 0.5;
   const thunder = night ? night.thunder : 0;
-  const drops = (cols * (0.24 + breath * 0.12 + thunder * 0.38)) | 0;
+  let drops = (cols * (0.24 + breath * 0.12 + thunder * 0.38)) | 0;
+  if (floor === FLOOR_PARK) drops = (drops * 0.22) | 0;
+  else if (floor === FLOOR_ALLEY) drops = (drops * 0.5) | 0;
+  const yCap =
+    floor === FLOOR_ALLEY || floor === FLOOR_PARK ? Math.max(1, (rows * 0.55) | 0) : rows;
   for (let k = 0; k < drops; k++) {
     const hx = hash2(k, 17, 91);
     const x = hx % cols;
     const speed = 11 + (hx & 7) + thunder * 6;
-    const y = (((hx >>> 8) % rows) + time * speed) % rows | 0;
+    const y = (((hx >>> 8) % yCap) + time * speed) % yCap | 0;
     if ((hx & 3) === 0 && thunder < 0.2) continue;
     const i = y * cols + x;
     chars[i] = (hx & 1) ? 47 : 124;
@@ -783,8 +1073,15 @@ export function drawMinimap(map, cam, display, sprites) {
       }
       const mi = wy * map.w + wx;
       if (map.solid[mi]) {
-        chars[i] = 35;
-        colors[i] = map.pal[mi] || C.BLUE;
+        const lx = map.landmarkX | 0;
+        const ly = map.landmarkY | 0;
+        if (map.landmarkX && wx === lx && wy === ly) {
+          chars[i] = 42;
+          colors[i] = C.CYAN;
+        } else {
+          chars[i] = 35;
+          colors[i] = map.pal[mi] || C.BLUE;
+        }
       } else if (map.floor[mi] === FLOOR_PARK) {
         chars[i] = map.foliage[mi] ? 111 : 46;
         colors[i] = map.foliage[mi] ? C.LIME : C.GRAY;
@@ -834,7 +1131,7 @@ export function drawMinimap(map, cam, display, sprites) {
         chars[idx] = 35;
         colors[idx] = C.GRAY;
       } else if (s.kind === 8) {
-        chars[idx] = 73;
+        chars[idx] = 79;
         colors[idx] = C.CYAN;
       } else {
         chars[idx] = 105;

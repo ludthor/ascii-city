@@ -1,4 +1,4 @@
-import { FLOOR_PARK } from "./city.js";
+import { FLOOR_ALLEY, FLOOR_PARK, FLOOR_PLAZA } from "./city.js";
 
 const CHIME_LABELS = { BAR: 1, OPEN: 1, RAMEN: 1, CAFE: 1 };
 
@@ -10,6 +10,8 @@ export function createAmbience() {
   let neonGain = null;
   let thunderGain = null;
   let whooshGain = null;
+  let rainLp = null;
+  let rainHp = null;
   const droneFilts = [];
   let started = false;
   let muted = false;
@@ -68,11 +70,11 @@ export function createAmbience() {
 
     rainGain = ctx.createGain();
     rainGain.gain.value = 0.01;
-    const rainHp = ctx.createBiquadFilter();
+    rainHp = ctx.createBiquadFilter();
     rainHp.type = "highpass";
     rainHp.frequency.value = 480;
     rainHp.Q.value = 0.5;
-    const rainLp = ctx.createBiquadFilter();
+    rainLp = ctx.createBiquadFilter();
     rainLp.type = "lowpass";
     rainLp.frequency.value = 3800;
     rainLp.Q.value = 0.55;
@@ -182,13 +184,30 @@ export function createAmbience() {
       const breath = night.breath;
       const buzz = night.buzz;
       const thunder = night.thunder;
-      const park = street && street.floor === FLOOR_PARK;
-      const quiet = park ? 0.62 : 1;
+      const fl = street && street.floor;
+      const park = fl === FLOOR_PARK;
+      const alley = fl === FLOOR_ALLEY;
+      const plaza = fl === FLOOR_PLAZA;
+      const quiet = alley ? 0.4 : park ? 0.45 : plaza ? 1.32 : 1;
       droneGain.gain.value = (0.038 + breath * 0.032) * quiet;
-      if (neonGain) neonGain.gain.value = (0.0022 + buzz * 0.007 + breath * 0.003) * (park ? 0.7 : 1);
-      if (rainGain) rainGain.gain.value = (0.008 + breath * 0.004 + thunder * 0.01) * (park ? 0.5 : 1);
+      if (neonGain) {
+        const neonMul = alley ? 6.5 : park ? 0.4 : plaza ? 1.15 : 1;
+        neonGain.gain.value = (0.0022 + buzz * 0.007 + breath * 0.003) * neonMul;
+      }
+      if (rainGain) {
+        const rainMul = alley ? 0.48 : park ? 0.28 : 1;
+        rainGain.gain.value = (0.008 + breath * 0.004 + thunder * 0.01) * rainMul;
+      }
+      if (rainLp) rainLp.frequency.value = alley ? 1500 : park ? 2600 : 3800;
+      if (rainHp) rainHp.frequency.value = alley ? 280 : 480;
       for (let i = 0; i < droneFilts.length; i++) {
-        droneFilts[i].frequency.value = 108 + breath * 95;
+        droneFilts[i].frequency.value = alley
+          ? 58 + breath * 36
+          : plaza
+            ? 165 + breath * 140
+            : park
+              ? 90 + breath * 50
+              : 108 + breath * 95;
       }
       if (thunderGain) thunderGain.gain.value = thunder * 0.16;
       if (whooshGain) {

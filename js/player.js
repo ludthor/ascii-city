@@ -19,7 +19,7 @@ export function createPlayer(map) {
     x: map.spawnX,
     y: map.spawnY,
     yaw: map.spawnYaw,
-    pitch: 0.06,
+    pitch: 0.2,
     eye: 0.55,
     eyeBase: 0.55,
     bob: 0,
